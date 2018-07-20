@@ -8,6 +8,7 @@ import (
 	"strconv"
 	elastic "gopkg.in/olivere/elastic.v3"
 	"reflect"
+	"strings"
 	"github.com/pborman/uuid"
 )
 
@@ -101,7 +102,7 @@ func saveToES(p *Post, id string) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("Post is saved to index :%s\n", p.Message)
+	fmt.Printf("Post with id %s is saved to index: %s\n", id, p.Message)
 }
 
 func handlerSearch(w http.ResponseWriter, r *http.Request) {
@@ -142,8 +143,10 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	var ps []Post
 	for _, item := range searchResult.Each(reflect.TypeOf(typ)) { // equivalent to Java instanceOf
 		p := item.(Post) // p = (Post) item //casting
-		fmt.Printf("post by %s: %s at lat %v and long %v\n", p.User, p.Message, p.Location.Lat, p.Location.Lon)
-		ps = append(ps, p) // we put all the search results in the slide ps
+		if shouldFilter(p.Message) {
+			ps = append(ps, p) // we put all the search results in the slide ps
+
+		}
 	}
 
 	js, err := json.Marshal(ps)
@@ -156,3 +159,13 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	w.Write(js)
 
 }
+
+func shouldFilter(post string) bool { // TODO: change to hash set
+	filtered_words :=[]string {"fuck", "shit"}
+	for _, word := range filtered_words {
+		if strings.Contains(post, word) {
+			return false
+		}
+	}
+	return true
+} 
