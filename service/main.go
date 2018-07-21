@@ -13,6 +13,10 @@ import (
 	"context"
 	"cloud.google.com/go/storage"
 	"io"
+	"github.com/auth0/go-jwt-middleware"
+	"github.com/dgrijalva/jwt-go"
+	"github.com/gorilla/mux"
+
 )
 
 type Location struct {
@@ -24,7 +28,7 @@ type Location struct {
 type Post struct {
 	User string `json:"user"`
 	Message string `json:"message"`
-	Location Location `json:"location"` 
+	Location Location `json:"location"`
 	Url string `json:"url"`
 }
 
@@ -33,9 +37,11 @@ const (
 	INDEX = "around"
 	TYPE = "post"
 	DISTANCE = "200km"
-	ES_URL = "http://35.202.220.181:9200"
+	ES_URL = "http://35.194.42.87:9200"
 	BUCKET_NAME = "around-prod"
 )
+
+var mySigningKey = []byte("secret")
 
 
 func main() {
@@ -45,7 +51,7 @@ func main() {
 		panic(err)
 		return
 	}
-	
+
 	// Use the IndexExists service to check if a specified index exists.
 	exists, err := client.IndexExists(INDEX).Do()
 	if err != nil {
@@ -67,8 +73,26 @@ func main() {
 	}
 
 	fmt.Println("started-service")
-	http.HandleFunc("/post", handlerPost)
-	http.HandleFunc("/search", handlerSearch)
+
+	r := mux.NewRouter()
+	var jwtMiddleware = jwtmiddleware.New(jwtmiddleware.Options{
+		ValidationKeyGetter : func(token *jwt.Token)(interface{}, error) { // jwt get token. we can also perform transformations on the keys in the later
+			return mySigningKey, nil				// e.g. different keys for different dates
+		},
+		SigningMethod: jwt.SigningMethodHS256,
+	})
+
+
+
+	//http.HandleFunc("/post", handlerPost)
+	r.Handle("/post", jwtMiddleware.Handler(http.HandlerFunc(handlerPost))).Methods("POST")
+	r.Handle("/search", jwtMiddleware.Handler(http.HandlerFunc(handlerSearch))).Methods("GET")
+	r.Handle("/login", http.HandlerFunc(loginHandler)).Methods("POST")
+	r.Handle("/signup", http.HandlerFunc(signupHandler)).Methods("POST")
+
+	//http.HandleFunc("/search", handlerSearch)
+	http.Handle("/", r)
+
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
@@ -86,7 +110,11 @@ func handlerPost(w http.ResponseWriter, r *http.Request) { // in Go we pass by v
 	w.Header().Set("Content-type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Header", "Content-Type,Authorization")
-	
+
+	user := r.Context().Value("user")
+	claims := user.(*jwt.Token).Claims
+	username := claims.(jwt.MapClaims)["username"]
+
 	r.ParseMultipartForm(32 << 20)
 
 	//Parse form data
@@ -95,7 +123,7 @@ func handlerPost(w http.ResponseWriter, r *http.Request) { // in Go we pass by v
 	lon, _ := strconv.ParseFloat(r.FormValue("lon"), 64)
 
 	p := &Post{
-		User : "1111",
+		User : username.(string),
 		Message: r.FormValue("message"),
 		Location: Location {
 			Lat: lat,
@@ -104,7 +132,7 @@ func handlerPost(w http.ResponseWriter, r *http.Request) { // in Go we pass by v
 	}
 
 	id := uuid.New()
-	
+
 	file,_,err := r.FormFile("image")
 	// jubing, fileHeader, err
 	if err != nil {
@@ -112,13 +140,13 @@ func handlerPost(w http.ResponseWriter, r *http.Request) { // in Go we pass by v
 		fmt.Printf("image is not setup %v\n", err) // we can use %v to output any type of data
 		panic(err)
 	}
-	
+
 	defer file.Close()
 
 	ctx := context.Background()
 
 	_, attrs, err := saveToGCS(ctx,file, BUCKET_NAME, id)
-	
+
 	if err != nil {
 		http.Error(w, "GCS is not setup", http.StatusInternalServerError)
 		fmt.Printf("GCS is not setup %v\n", err)
@@ -134,7 +162,7 @@ func handlerPost(w http.ResponseWriter, r *http.Request) { // in Go we pass by v
 func saveToGCS(ctx context.Context, r io.Reader, bucketName, name string) (*storage.ObjectHandle, *storage.ObjectAttrs, error) {
 	// as long as we implement io.Reader interface, we can use io.Copy
 	client, err := storage.NewClient(ctx)
-	
+
 	if err != nil {
 		return nil, nil, err
 	}
@@ -142,10 +170,10 @@ func saveToGCS(ctx context.Context, r io.Reader, bucketName, name string) (*stor
 	defer client.Close()
 
 	bucket := client.Bucket(BUCKET_NAME)
-	
+
 	// Next check if the bucket exists
 	if _, err := bucket.Attrs(ctx); err != nil {
-		return nil, nil, err 
+		return nil, nil, err
 	}
 
 	obj := bucket.Object(name)
@@ -185,7 +213,7 @@ func saveToES(p *Post, id string) {
 
 func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Received one request for search.")
-	
+
 	lat, _ := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
 	lon, _ := strconv.ParseFloat(r.URL.Query().Get("lon"), 64)
 
@@ -194,7 +222,7 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	if val:= r.URL.Query().Get("range"); val != "" {
 		ran = val + "km"
 	}
-	
+
 	fmt.Printf("Search received. %f % f %s\n", lat, lon, ran)
 
 	client, err := elastic.NewClient(elastic.SetURL(ES_URL), elastic.SetSniff(false)) // sniff : elastic's library, there is a callback to do logging.
@@ -246,4 +274,4 @@ func shouldFilter(post string) bool { // TODO: change to hash set
 		}
 	}
 	return true
-} 
+}
