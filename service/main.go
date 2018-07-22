@@ -37,7 +37,7 @@ const (
 	INDEX = "around"
 	TYPE = "post"
 	DISTANCE = "200km"
-	ES_URL = "http://35.226.133.227:9200"
+	ES_URL = "http://35.232.5.64:9200"
 	GOOGLE_GCS_BUCKET_NAME = "around-prod"
 	GOOGLE_PROJECT_ID = "around-prod"
 	GOOGLE_BT_INSTANCE = "around-post"
