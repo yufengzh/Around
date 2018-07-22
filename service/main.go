@@ -16,7 +16,7 @@ import (
 	"github.com/auth0/go-jwt-middleware"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
-
+	"cloud.google.com/go/bigtable"
 )
 
 type Location struct {
@@ -38,7 +38,9 @@ const (
 	TYPE = "post"
 	DISTANCE = "200km"
 	ES_URL = "http://35.226.133.227:9200"
-	BUCKET_NAME = "around-prod"
+	GOOGLE_GCS_BUCKET_NAME = "around-prod"
+	GOOGLE_PROJECT_ID = "around-prod"
+	GOOGLE_BT_INSTANCE = "around-post"
 )
 
 var mySigningKey = []byte("secret")
@@ -145,7 +147,7 @@ func handlerPost(w http.ResponseWriter, r *http.Request) { // in Go we pass by v
 
 	ctx := context.Background()
 
-	_, attrs, err := saveToGCS(ctx,file, BUCKET_NAME, id)
+	_, attrs, err := saveToGCS(ctx,file, GOOGLE_GCS_BUCKET_NAME, id)
 
 	if err != nil {
 		http.Error(w, "GCS is not setup", http.StatusInternalServerError)
@@ -157,6 +159,36 @@ func handlerPost(w http.ResponseWriter, r *http.Request) { // in Go we pass by v
 
 	//Save to ES
 	saveToES(p, id) // p is now a pointer so take the % off
+
+	// Save to BigTable
+	saveToBigTable(p, id)
+}
+
+func saveToBigTable(p *Post, id string) {
+	ctx := context.Background()
+	 // you must update project name here
+	 bt_client, err := bigtable.NewClient(ctx, GOOGLE_PROJECT_ID, GOOGLE_BT_INSTANCE)
+	 if err != nil {
+					panic(err)
+					return
+	 }
+
+	 tbl := bt_client.Open("post")
+	 mut := bigtable.NewMutation()
+	 t := bigtable.Now()
+
+	 mut.Set("post", "user", t, []byte(p.User))
+	 mut.Set("post", "message", t, []byte(p.Message))
+	 mut.Set("location", "lat", t, []byte(strconv.FormatFloat(p.Location.Lat, 'f', -1, 64)))
+	 mut.Set("location", "lon", t, []byte(strconv.FormatFloat(p.Location.Lon, 'f', -1, 64)))
+
+	 err = tbl.Apply(ctx, id, mut)
+	 if err != nil {
+					panic(err)
+					return
+	 }
+	 fmt.Printf("Post is saved to BigTable: %s\n", p.Message)
+
 }
 
 func saveToGCS(ctx context.Context, r io.Reader, bucketName, name string) (*storage.ObjectHandle, *storage.ObjectAttrs, error) {
@@ -169,7 +201,7 @@ func saveToGCS(ctx context.Context, r io.Reader, bucketName, name string) (*stor
 
 	defer client.Close()
 
-	bucket := client.Bucket(BUCKET_NAME)
+	bucket := client.Bucket(GOOGLE_GCS_BUCKET_NAME)
 
 	// Next check if the bucket exists
 	if _, err := bucket.Attrs(ctx); err != nil {
