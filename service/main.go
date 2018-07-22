@@ -37,7 +37,7 @@ const (
 	INDEX = "around"
 	TYPE = "post"
 	DISTANCE = "200km"
-	ES_URL = "http://35.194.42.87:9200"
+	ES_URL = "http://35.226.133.227:9200"
 	BUCKET_NAME = "around-prod"
 )
 
